@@ -41,7 +41,9 @@ def test_kubernetes_job_spec_includes_hardening_defaults() -> None:
     assert container.security_context.capabilities.drop == ["ALL"]
     assert container.resources.limits["memory"] == "512Mi"
     assert container.resources.limits["cpu"] == "1000m"
-    assert {env.name: env.value for env in container.env}["MPLCONFIGDIR"] == "/tmp/matplotlib"
+    env = {env.name: env.value for env in container.env}
+    assert env["MPLCONFIGDIR"] == "/tmp/matplotlib"
+    assert env["OPENBLAS_NUM_THREADS"] == "1"
     assert job.spec.active_deadline_seconds == 25
     assert {mount.mount_path for mount in container.volume_mounts} == {
         "/request",

@@ -54,6 +54,10 @@ def build_execution_spec(
         env=[
             client.V1EnvVar(name="MPLBACKEND", value="Agg"),
             client.V1EnvVar(name="MPLCONFIGDIR", value="/tmp/matplotlib"),
+            client.V1EnvVar(name="MKL_NUM_THREADS", value="1"),
+            client.V1EnvVar(name="NUMEXPR_NUM_THREADS", value="1"),
+            client.V1EnvVar(name="OMP_NUM_THREADS", value="1"),
+            client.V1EnvVar(name="OPENBLAS_NUM_THREADS", value="1"),
             client.V1EnvVar(name="PYTHONUNBUFFERED", value="1"),
         ],
         resources=client.V1ResourceRequirements(
