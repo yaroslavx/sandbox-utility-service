@@ -21,6 +21,10 @@ def create_runner(settings: Settings) -> Runner:
         from sandbox_service.runners.fake import FakeRunner
 
         return FakeRunner()
+    if settings.runner == "subprocess":
+        from sandbox_service.runners.subprocess_runner import SubprocessRunner
+
+        return SubprocessRunner()
     if settings.runner == "local-dev":
         from sandbox_service.runners.local_dev import LocalDevRunner
 

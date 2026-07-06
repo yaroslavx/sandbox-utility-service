@@ -13,22 +13,23 @@ main C# backend.
 - HTTP REST API with OpenAPI docs.
 - Initial runtime preset: `python-datascience`.
 - No runtime package installation.
-- Network disabled for executed code where the Kubernetes cluster allows it.
 - Artifacts are returned inline as base64; the C# backend owns long-term storage.
-- Kubernetes Job runner is the production path.
+- `subprocess` runner is the practical MVP path when the app cannot receive Kubernetes RBAC.
 - Fake runner is available for tests and local API smoke checks.
-- Local subprocess runner exists only behind `SANDBOX_RUNNER=local-dev`.
+- Kubernetes Job runner remains available as an optional stronger future path.
 
-Ordinary containers are not a complete security boundary. For production, use
-the Kubernetes hardening defaults in this service and configure gVisor, Kata, or
-another stronger runtime through `SANDBOX_RUNTIME_CLASS_NAME` when available.
+The default subprocess runner is not a strong sandbox. It provides best-effort
+process isolation, timeouts, output limits, temporary workspaces, sanitized child
+environment variables, and Linux resource limits where available. Do not mount
+secrets, service account tokens, broad internal network access, or sensitive
+files into the API pod.
 
 ## API
 
-Run the API locally with the fake runner:
+Run the API locally with the subprocess runner:
 
 ```bash
-SANDBOX_RUNNER=fake uvicorn sandbox_service.main:app --reload
+SANDBOX_RUNNER=subprocess uvicorn sandbox_service.main:app --reload
 ```
 
 Submit a run:
@@ -64,9 +65,58 @@ Run tests:
 pytest
 ```
 
-## Runtime Image
+## Configuration
 
-The production Kubernetes Job expects a runtime image that includes:
+The service reads environment variables with the `SANDBOX_` prefix.
+
+Common values:
+
+```text
+SANDBOX_RUNNER=subprocess
+SANDBOX_DEFAULT_TIMEOUT_S=20
+SANDBOX_MAX_TIMEOUT_S=30
+SANDBOX_DEFAULT_MEMORY_MB=512
+SANDBOX_MAX_MEMORY_MB=2048
+SANDBOX_DEFAULT_MAX_ARTIFACT_MB=25
+SANDBOX_MAX_ARTIFACT_MB=50
+```
+
+Supported runners:
+
+```text
+subprocess  # default MVP path without Kubernetes RBAC
+kubernetes  # optional stronger path; requires namespace-scoped RBAC
+fake        # tests and API smoke checks
+local-dev   # deprecated alias for subprocess
+```
+
+## Deployment Without Kubernetes RBAC
+
+Use `SANDBOX_RUNNER=subprocess` when DevOps will not grant the application
+permission to create Kubernetes Jobs, ConfigMaps, NetworkPolicies, or read pod
+logs.
+
+Recommended pod hardening for this mode:
+
+- run as non-root;
+- do not mount Kubernetes service account tokens;
+- do not inject application secrets unless absolutely required by the API layer;
+- use a read-only root filesystem where feasible;
+- mount only explicit writable temp/artifact directories;
+- restrict egress from the API pod as much as the platform allows;
+- set CPU/memory limits on the API pod itself;
+- treat executed code as untrusted even though this is not a full sandbox.
+
+Longer term, stronger isolation should come from a DevOps-owned executor service
+or the optional Kubernetes Job runner.
+
+## Optional Kubernetes Job Runner
+
+`SANDBOX_RUNNER=kubernetes` keeps the stronger target architecture, but the API
+service must be allowed to create and clean up execution resources in a dedicated
+namespace. This is usually a DevOps/platform decision, not a normal app default.
+
+The Kubernetes runtime image should include:
 
 - Python
 - `numpy`
@@ -76,4 +126,10 @@ The production Kubernetes Job expects a runtime image that includes:
 - `openpyxl`
 - the wrapper entrypoint at `/opt/sandbox/runtime_wrapper.py`
 
-A sample Dockerfile is provided at `docker/runtime.Dockerfile`.
+Useful Kubernetes settings:
+
+```text
+SANDBOX_KUBERNETES_NAMESPACE=sandbox-executions
+SANDBOX_KUBERNETES_RUNTIME_IMAGE=registry.company.local/sandbox-python-datascience:0.1.0
+SANDBOX_KUBERNETES_RUNTIME_CLASS_NAME=gvisor
+```

@@ -4,6 +4,7 @@ import pytest
 
 from sandbox_service.models import EffectiveRunLimits, RunInput, RunRequest, RunStatus
 from sandbox_service.runners.local_dev import LocalDevRunner
+from sandbox_service.runners.subprocess_runner import SubprocessRunner
 
 
 def _limits(**overrides) -> EffectiveRunLimits:
@@ -20,8 +21,8 @@ def _limits(**overrides) -> EffectiveRunLimits:
     return EffectiveRunLimits(**values)
 
 
-def test_local_dev_runner_success_stdout() -> None:
-    response = LocalDevRunner().run(
+def test_subprocess_runner_success_stdout() -> None:
+    response = SubprocessRunner().run(
         run_id="run-1",
         request=RunRequest(code="print(2 + 2)"),
         limits=_limits(),
@@ -32,8 +33,8 @@ def test_local_dev_runner_success_stdout() -> None:
     assert response.exit_code == 0
 
 
-def test_local_dev_runner_exception_maps_to_error() -> None:
-    response = LocalDevRunner().run(
+def test_subprocess_runner_exception_maps_to_error() -> None:
+    response = SubprocessRunner().run(
         run_id="run-1",
         request=RunRequest(code="raise ValueError('bad math')"),
         limits=_limits(),
@@ -46,8 +47,8 @@ def test_local_dev_runner_exception_maps_to_error() -> None:
     assert response.error.code == "ValueError"
 
 
-def test_local_dev_runner_timeout() -> None:
-    response = LocalDevRunner().run(
+def test_subprocess_runner_timeout() -> None:
+    response = SubprocessRunner().run(
         run_id="run-1",
         request=RunRequest(code="while True:\n    pass\n"),
         limits=_limits(timeout_s=1),
@@ -57,8 +58,8 @@ def test_local_dev_runner_timeout() -> None:
     assert response.exit_code is None
 
 
-def test_local_dev_runner_materializes_inputs() -> None:
-    response = LocalDevRunner().run(
+def test_subprocess_runner_materializes_inputs() -> None:
+    response = SubprocessRunner().run(
         run_id="run-1",
         request=RunRequest(
             code="print(open('data.txt').read())",
@@ -71,8 +72,8 @@ def test_local_dev_runner_materializes_inputs() -> None:
     assert response.stdout.strip() == "hello"
 
 
-def test_local_dev_runner_materializes_base64_file_input() -> None:
-    response = LocalDevRunner().run(
+def test_subprocess_runner_materializes_base64_file_input() -> None:
+    response = SubprocessRunner().run(
         run_id="run-1",
         request=RunRequest(
             code="print(open('data.bin', 'rb').read().hex())",
@@ -91,10 +92,10 @@ def test_local_dev_runner_materializes_base64_file_input() -> None:
     assert response.stdout.strip() == "cafe"
 
 
-def test_local_dev_runner_captures_matplotlib_png() -> None:
+def test_subprocess_runner_captures_matplotlib_png() -> None:
     pytest.importorskip("matplotlib")
 
-    response = LocalDevRunner().run(
+    response = SubprocessRunner().run(
         run_id="run-1",
         request=RunRequest(
             code=(
@@ -112,3 +113,45 @@ def test_local_dev_runner_captures_matplotlib_png() -> None:
     assert artifact.name == "figure_1.png"
     assert artifact.mime_type == "image/png"
     assert base64.b64decode(artifact.content_base64).startswith(b"\x89PNG")
+
+
+def test_subprocess_runner_scrubs_parent_environment(monkeypatch) -> None:
+    monkeypatch.setenv("SHOULD_NOT_LEAK_TO_SANDBOX", "secret")
+
+    response = SubprocessRunner().run(
+        run_id="run-1",
+        request=RunRequest(
+            code=(
+                "import os\n"
+                "print(os.environ.get('SHOULD_NOT_LEAK_TO_SANDBOX', 'missing'))\n"
+                "print(os.environ.get('MPLBACKEND'))\n"
+            )
+        ),
+        limits=_limits(),
+    )
+
+    assert response.status == RunStatus.SUCCESS
+    assert response.stdout.splitlines() == ["missing", "Agg"]
+
+
+def test_subprocess_runner_truncates_stdout() -> None:
+    response = SubprocessRunner().run(
+        run_id="run-1",
+        request=RunRequest(code="print('a' * 4096)"),
+        limits=_limits(max_stdout_kb=1),
+    )
+
+    assert response.status == RunStatus.SUCCESS
+    assert "[truncated]" in response.stdout
+    assert len(response.stdout.encode("utf-8")) <= 1024
+
+
+def test_local_dev_runner_alias_still_works() -> None:
+    response = LocalDevRunner().run(
+        run_id="run-1",
+        request=RunRequest(code="print('alias')"),
+        limits=_limits(),
+    )
+
+    assert response.status == RunStatus.SUCCESS
+    assert response.stdout.strip() == "alias"

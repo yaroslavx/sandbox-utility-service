@@ -1,5 +1,30 @@
 from sandbox_service.models import RunLimits
+from sandbox_service.runner import create_runner
+from sandbox_service.runners.local_dev import LocalDevRunner
+from sandbox_service.runners.subprocess_runner import SubprocessRunner
 from sandbox_service.settings import Settings
+
+
+def test_default_runner_is_subprocess() -> None:
+    assert Settings().runner == "subprocess"
+
+
+def test_sandbox_runner_env_selects_subprocess(monkeypatch) -> None:
+    monkeypatch.setenv("SANDBOX_RUNNER", "subprocess")
+
+    assert Settings().runner == "subprocess"
+
+
+def test_create_runner_supports_subprocess() -> None:
+    runner = create_runner(Settings(runner="subprocess"))
+
+    assert isinstance(runner, SubprocessRunner)
+
+
+def test_create_runner_supports_deprecated_local_dev_alias() -> None:
+    runner = create_runner(Settings(runner="local-dev"))
+
+    assert isinstance(runner, LocalDevRunner)
 
 
 def test_effective_limits_apply_defaults() -> None:
