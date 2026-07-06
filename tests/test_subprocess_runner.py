@@ -128,13 +128,14 @@ def test_subprocess_runner_scrubs_parent_environment(monkeypatch) -> None:
                 "import os\n"
                 "print(os.environ.get('SHOULD_NOT_LEAK_TO_SANDBOX', 'missing'))\n"
                 "print(os.environ.get('MPLBACKEND'))\n"
+                "print(os.environ.get('MPLCONFIGDIR', '').endswith('/tmp/matplotlib'))\n"
             )
         ),
         limits=_limits(),
     )
 
     assert response.status == RunStatus.SUCCESS
-    assert response.stdout.splitlines() == ["missing", "Agg"]
+    assert response.stdout.splitlines() == ["missing", "Agg", "True"]
 
 
 def test_subprocess_runner_sets_python_no_user_site() -> None:

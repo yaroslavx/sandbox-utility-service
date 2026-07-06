@@ -46,6 +46,7 @@ def main() -> int:
     error: dict[str, str] | None = None
 
     os.environ["MPLBACKEND"] = "Agg"
+    os.environ.setdefault("MPLCONFIGDIR", str(workspace / ".matplotlib"))
     old_argv = sys.argv[:]
     old_path = sys.path[:]
     sys.argv = [str(code_path)]

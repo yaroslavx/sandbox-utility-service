@@ -109,6 +109,7 @@ def _child_env(*, root: Path, tmp: Path) -> dict[str, str]:
         "LANG": "C.UTF-8",
         "LC_ALL": "C.UTF-8",
         "MPLBACKEND": "Agg",
+        "MPLCONFIGDIR": str(tmp / "matplotlib"),
         "PATH": "/usr/local/bin:/usr/bin:/bin",
         "PYTHONDONTWRITEBYTECODE": "1",
         "PYTHONNOUSERSITE": "1",
