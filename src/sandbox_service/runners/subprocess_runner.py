@@ -1,4 +1,5 @@
 import platform
+import signal
 import subprocess
 import sys
 import tempfile
@@ -47,34 +48,37 @@ class SubprocessRunner(Runner):
             materialize_inputs(request.inputs, workspace)
 
             wrapper = Path(__file__).resolve().parents[1] / "runtime" / "runtime_wrapper.py"
+            proc = subprocess.Popen(
+                [
+                    sys.executable,
+                    str(wrapper),
+                    "--code-path",
+                    str(code_path),
+                    "--workspace",
+                    str(workspace),
+                    "--artifacts",
+                    str(artifacts),
+                    "--manifest",
+                    str(artifacts / "manifest.json"),
+                ],
+                cwd=workspace,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                env=_child_env(root=root, tmp=tmp),
+                preexec_fn=_child_preexec(limits),
+                start_new_session=_use_process_group(),
+            )
             try:
-                proc = subprocess.run(
-                    [
-                        sys.executable,
-                        str(wrapper),
-                        "--code-path",
-                        str(code_path),
-                        "--workspace",
-                        str(workspace),
-                        "--artifacts",
-                        str(artifacts),
-                        "--manifest",
-                        str(artifacts / "manifest.json"),
-                    ],
-                    cwd=workspace,
-                    capture_output=True,
-                    text=True,
-                    timeout=limits.timeout_s,
-                    check=False,
-                    env=_child_env(root=root, tmp=tmp),
-                    preexec_fn=_resource_limiter(limits),
-                )
-            except subprocess.TimeoutExpired as exc:
+                stdout, stderr = proc.communicate(timeout=limits.timeout_s)
+            except subprocess.TimeoutExpired:
+                _kill_process_tree(proc)
+                stdout, stderr = proc.communicate()
                 return RunResponse(
                     run_id=run_id,
                     status=RunStatus.TIMEOUT,
-                    stdout=truncate_text(exc.stdout or "", limits.max_stdout_kb),
-                    stderr=truncate_text(exc.stderr or "execution timed out", limits.max_stderr_kb),
+                    stdout=truncate_text(stdout or "", limits.max_stdout_kb),
+                    stderr=truncate_text(stderr or "execution timed out", limits.max_stderr_kb),
                     exit_code=None,
                     artifacts=[],
                     metrics=Metrics(runtime_ms=_elapsed_ms(start)),
@@ -83,7 +87,7 @@ class SubprocessRunner(Runner):
 
             response = _parse_wrapper_response(
                 run_id=run_id,
-                logs=proc.stdout,
+                logs=stdout,
                 limits=limits,
                 fallback_runtime_ms=_elapsed_ms(start),
             )
@@ -92,7 +96,7 @@ class SubprocessRunner(Runner):
                     update={
                         "status": RunStatus.ERROR,
                         "exit_code": proc.returncode,
-                        "stderr": truncate_text(proc.stderr, limits.max_stderr_kb),
+                        "stderr": truncate_text(stderr, limits.max_stderr_kb),
                         "error": RunError(code="wrapper_error", message="runtime wrapper failed"),
                     }
                 )
@@ -107,29 +111,37 @@ def _child_env(*, root: Path, tmp: Path) -> dict[str, str]:
         "MPLBACKEND": "Agg",
         "PATH": "/usr/local/bin:/usr/bin:/bin",
         "PYTHONDONTWRITEBYTECODE": "1",
+        "PYTHONNOUSERSITE": "1",
         "PYTHONUNBUFFERED": "1",
         "TMPDIR": str(tmp),
     }
 
 
-def _resource_limiter(limits: EffectiveRunLimits) -> Callable[[], None] | None:
+def _child_preexec(limits: EffectiveRunLimits) -> Callable[[], None] | None:
     if platform.system() != "Linux":
         return None
 
-    def apply_limits() -> None:
+    def prepare_child() -> None:
+        import os
         import resource
+
+        os.umask(0o077)
 
         memory_bytes = limits.memory_mb * 1024 * 1024
         disk_bytes = limits.disk_mb * 1024 * 1024
         cpu_seconds = max(1, limits.timeout_s + 1)
+        stack_bytes = 64 * 1024 * 1024
 
         _set_limit(resource.RLIMIT_AS, memory_bytes)
         _set_limit(resource.RLIMIT_CPU, cpu_seconds)
         _set_limit(resource.RLIMIT_FSIZE, disk_bytes)
+        _set_limit(resource.RLIMIT_CORE, 0)
+        _set_limit(resource.RLIMIT_NOFILE, 64)
+        _set_limit(resource.RLIMIT_STACK, stack_bytes)
         if hasattr(resource, "RLIMIT_NPROC"):
             _set_limit(resource.RLIMIT_NPROC, 32)
 
-    return apply_limits
+    return prepare_child
 
 
 def _set_limit(resource_name: int, value: int) -> None:
@@ -138,6 +150,24 @@ def _set_limit(resource_name: int, value: int) -> None:
     soft, hard = resource.getrlimit(resource_name)
     desired = value if hard == resource.RLIM_INFINITY else min(value, hard)
     resource.setrlimit(resource_name, (desired, hard))
+
+
+def _use_process_group() -> bool:
+    return platform.system() != "Windows"
+
+
+def _kill_process_tree(proc: subprocess.Popen[str]) -> None:
+    if proc.poll() is not None:
+        return
+    if _use_process_group():
+        try:
+            import os
+
+            os.killpg(proc.pid, signal.SIGKILL)
+            return
+        except ProcessLookupError:
+            return
+    proc.kill()
 
 
 def _elapsed_ms(start: float) -> int:

@@ -1,8 +1,12 @@
 import base64
+import platform
+import sys
+import types
 
 import pytest
 
 from sandbox_service.models import EffectiveRunLimits, RunInput, RunRequest, RunStatus
+from sandbox_service.runners import subprocess_runner
 from sandbox_service.runners.subprocess_runner import SubprocessRunner
 
 
@@ -133,6 +137,41 @@ def test_subprocess_runner_scrubs_parent_environment(monkeypatch) -> None:
     assert response.stdout.splitlines() == ["missing", "Agg"]
 
 
+def test_subprocess_runner_sets_python_no_user_site() -> None:
+    response = SubprocessRunner().run(
+        run_id="run-1",
+        request=RunRequest(
+            code=(
+                "import os\n"
+                "print(os.environ.get('PYTHONNOUSERSITE'))\n"
+            )
+        ),
+        limits=_limits(),
+    )
+
+    assert response.status == RunStatus.SUCCESS
+    assert response.stdout.strip() == "1"
+
+
+def test_subprocess_runner_uses_process_group_on_unix() -> None:
+    response = SubprocessRunner().run(
+        run_id="run-1",
+        request=RunRequest(
+            code=(
+                "import os\n"
+                "print(os.getsid(0) == os.getpid())\n"
+            )
+        ),
+        limits=_limits(),
+    )
+
+    assert response.status == RunStatus.SUCCESS
+    if platform.system() == "Windows":
+        assert response.stdout.strip() == "False"
+    else:
+        assert response.stdout.strip() == "True"
+
+
 def test_subprocess_runner_truncates_stdout() -> None:
     response = SubprocessRunner().run(
         run_id="run-1",
@@ -144,3 +183,32 @@ def test_subprocess_runner_truncates_stdout() -> None:
     assert "[truncated]" in response.stdout
     assert len(response.stdout.encode("utf-8")) <= 1024
 
+
+def test_linux_child_preexec_sets_additional_resource_limits(monkeypatch) -> None:
+    calls: list[tuple[int, tuple[int, int]]] = []
+    fake_resource = types.SimpleNamespace(
+        RLIM_INFINITY=-1,
+        RLIMIT_AS=1,
+        RLIMIT_CPU=2,
+        RLIMIT_FSIZE=3,
+        RLIMIT_CORE=4,
+        RLIMIT_NOFILE=5,
+        RLIMIT_STACK=6,
+        RLIMIT_NPROC=7,
+        getrlimit=lambda _name: (-1, -1),
+        setrlimit=lambda name, value: calls.append((name, value)),
+    )
+    fake_os = types.SimpleNamespace(umask=lambda _mask: None)
+    monkeypatch.setattr(subprocess_runner.platform, "system", lambda: "Linux")
+    monkeypatch.setitem(sys.modules, "resource", fake_resource)
+    monkeypatch.setitem(sys.modules, "os", fake_os)
+
+    preexec = subprocess_runner._child_preexec(_limits(timeout_s=3, memory_mb=128, disk_mb=10))
+
+    assert preexec is not None
+    preexec()
+
+    resource_names = {name for name, _value in calls}
+    assert resource_names == {1, 2, 3, 4, 5, 6, 7}
+    assert (4, (0, -1)) in calls
+    assert (5, (64, -1)) in calls

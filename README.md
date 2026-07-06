@@ -20,9 +20,9 @@ main C# backend.
 
 The default subprocess runner is not a strong sandbox. It provides best-effort
 process isolation, timeouts, output limits, temporary workspaces, sanitized child
-environment variables, and Linux resource limits where available. Do not mount
-secrets, service account tokens, broad internal network access, or sensitive
-files into the API pod.
+environment variables, process-group cleanup, restrictive file permissions, and
+Linux resource limits where available. Do not mount secrets, service account
+tokens, broad internal network access, or sensitive files into the API pod.
 
 ## API
 
@@ -105,6 +105,16 @@ Recommended pod hardening for this mode:
 - restrict egress from the API pod as much as the platform allows;
 - set CPU/memory limits on the API pod itself;
 - treat executed code as untrusted even though this is not a full sandbox.
+
+The subprocess runner also applies best-effort child-process restrictions:
+
+- timeout per run;
+- kill the whole child process group on timeout on Unix-like systems;
+- isolated temporary `workspace`, `tmp`, and `artifacts` directories;
+- sanitized child environment, including `PYTHONNOUSERSITE=1`;
+- `umask 077` on Linux;
+- Linux `rlimit` values for memory, CPU seconds, file size, core dumps, open
+  files, stack, and process count.
 
 Longer term, stronger isolation should come from a DevOps-owned executor service
 or the optional Kubernetes Job runner.
