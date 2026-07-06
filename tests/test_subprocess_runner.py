@@ -3,7 +3,6 @@ import base64
 import pytest
 
 from sandbox_service.models import EffectiveRunLimits, RunInput, RunRequest, RunStatus
-from sandbox_service.runners.local_dev import LocalDevRunner
 from sandbox_service.runners.subprocess_runner import SubprocessRunner
 
 
@@ -145,13 +144,3 @@ def test_subprocess_runner_truncates_stdout() -> None:
     assert "[truncated]" in response.stdout
     assert len(response.stdout.encode("utf-8")) <= 1024
 
-
-def test_local_dev_runner_alias_still_works() -> None:
-    response = LocalDevRunner().run(
-        run_id="run-1",
-        request=RunRequest(code="print('alias')"),
-        limits=_limits(),
-    )
-
-    assert response.status == RunStatus.SUCCESS
-    assert response.stdout.strip() == "alias"

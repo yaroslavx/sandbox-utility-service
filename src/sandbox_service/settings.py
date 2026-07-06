@@ -10,7 +10,7 @@ from sandbox_service.models import EffectiveRunLimits, RunLimits
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="SANDBOX_", extra="ignore")
 
-    runner: Literal["subprocess", "kubernetes", "fake", "local-dev"] = "subprocess"
+    runner: Literal["subprocess", "kubernetes", "fake"] = "subprocess"
 
     default_timeout_s: int = 20
     default_memory_mb: int = 512

@@ -87,7 +87,6 @@ Supported runners:
 subprocess  # default MVP path without Kubernetes RBAC
 kubernetes  # optional stronger path; requires namespace-scoped RBAC
 fake        # tests and API smoke checks
-local-dev   # deprecated alias for subprocess
 ```
 
 ## Deployment Without Kubernetes RBAC

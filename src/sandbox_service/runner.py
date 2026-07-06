@@ -25,10 +25,6 @@ def create_runner(settings: Settings) -> Runner:
         from sandbox_service.runners.subprocess_runner import SubprocessRunner
 
         return SubprocessRunner()
-    if settings.runner == "local-dev":
-        from sandbox_service.runners.local_dev import LocalDevRunner
-
-        return LocalDevRunner()
     if settings.runner == "kubernetes":
         from sandbox_service.runners.kubernetes_runner import KubernetesJobRunner
 
