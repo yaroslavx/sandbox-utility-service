@@ -10,3 +10,31 @@ dist/
 build/
 *.egg-info/
 .DS_Store
+# Виртуальные окружения
+venv/
+.venv-export/
+env/
+
+# Переменные окружения
+.env
+.env.*
+!.env.example
+
+# Python-артефакты
+*.pyo
+*.so
+
+
+# IDE
+.idea/
+.vscode/
+
+# ML-модели
+model/
+onnx_model/
+*.onnx
+wheels/
+
+# ОС
+.DS_Store
+*.log
