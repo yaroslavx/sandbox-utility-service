@@ -118,6 +118,51 @@ def test_subprocess_runner_captures_matplotlib_png() -> None:
     assert base64.b64decode(artifact.content_base64).startswith(b"\x89PNG")
 
 
+def test_subprocess_runner_captures_saved_and_closed_png() -> None:
+    pytest.importorskip("matplotlib")
+
+    response = SubprocessRunner().run(
+        run_id="run-1",
+        request=RunRequest(
+            code=(
+                "import matplotlib.pyplot as plt\n"
+                "plt.plot([1, 2, 3], [1, 4, 9])\n"
+                "plt.savefig('histogram.png')\n"
+                "plt.close()\n"
+            )
+        ),
+        limits=_limits(),
+    )
+
+    assert response.status == RunStatus.SUCCESS
+    assert len(response.artifacts) == 1
+    artifact = response.artifacts[0]
+    assert artifact.name == "histogram.png"
+    assert artifact.mime_type == "image/png"
+    assert base64.b64decode(artifact.content_base64).startswith(b"\x89PNG")
+
+
+def test_subprocess_runner_captures_generated_workspace_file() -> None:
+    response = SubprocessRunner().run(
+        run_id="run-1",
+        request=RunRequest(
+            code=(
+                "from pathlib import Path\n"
+                "Path('reports').mkdir()\n"
+                "Path('reports/result.txt').write_text('done', encoding='utf-8')\n"
+            )
+        ),
+        limits=_limits(),
+    )
+
+    assert response.status == RunStatus.SUCCESS
+    assert len(response.artifacts) == 1
+    artifact = response.artifacts[0]
+    assert artifact.name == "reports/result.txt"
+    assert artifact.mime_type == "text/plain"
+    assert base64.b64decode(artifact.content_base64) == b"done"
+
+
 def test_subprocess_runner_imports_datascience_runtime_packages() -> None:
     response = SubprocessRunner().run(
         run_id="run-1",

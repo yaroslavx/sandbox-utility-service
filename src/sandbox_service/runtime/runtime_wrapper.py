@@ -6,6 +6,7 @@ import json
 import mimetypes
 import os
 import runpy
+import shutil
 import sys
 import time
 import traceback
@@ -51,6 +52,7 @@ def main() -> int:
     old_path = sys.path[:]
     sys.argv = [str(code_path)]
     sys.path.insert(0, str(workspace))
+    workspace_snapshot = _snapshot_workspace(workspace)
 
     try:
         with contextlib.redirect_stdout(stdout_buffer), contextlib.redirect_stderr(stderr_buffer):
@@ -69,7 +71,18 @@ def main() -> int:
         sys.argv = old_argv
         sys.path = old_path
 
-    artifacts = _capture_matplotlib_figures(artifacts_dir)
+    artifacts = _capture_workspace_artifacts(
+        workspace=workspace,
+        artifacts_dir=artifacts_dir,
+        baseline=workspace_snapshot,
+        excluded_paths={code_path.resolve()},
+    )
+    artifacts.extend(
+        _capture_matplotlib_figures(
+            artifacts_dir=artifacts_dir,
+            existing_names={item["name"] for item in artifacts},
+        )
+    )
     manifest = {"artifacts": artifacts}
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
 
@@ -108,7 +121,61 @@ def _materialize_request_inputs(inputs: list[dict[str, Any]], workspace: Path) -
         target.write_bytes(content)
 
 
-def _capture_matplotlib_figures(artifacts_dir: Path) -> list[dict[str, Any]]:
+def _snapshot_workspace(workspace: Path) -> dict[Path, tuple[int, int]]:
+    snapshot: dict[Path, tuple[int, int]] = {}
+    workspace_root = workspace.resolve()
+    for path in workspace_root.rglob("*"):
+        if not path.is_file() or _is_ignored_workspace_path(path.relative_to(workspace_root)):
+            continue
+        stat = path.stat()
+        snapshot[path.resolve()] = (stat.st_size, stat.st_mtime_ns)
+    return snapshot
+
+
+def _capture_workspace_artifacts(
+    *,
+    workspace: Path,
+    artifacts_dir: Path,
+    baseline: dict[Path, tuple[int, int]],
+    excluded_paths: set[Path],
+) -> list[dict[str, Any]]:
+    artifacts: list[dict[str, Any]] = []
+    workspace_root = workspace.resolve()
+    for source in sorted(workspace_root.rglob("*")):
+        if not source.is_file():
+            continue
+        resolved = source.resolve()
+        if resolved in excluded_paths:
+            continue
+        relative = source.relative_to(workspace_root)
+        if _is_ignored_workspace_path(relative):
+            continue
+        stat = source.stat()
+        if baseline.get(resolved) == (stat.st_size, stat.st_mtime_ns):
+            continue
+        name = relative.as_posix()
+        target = artifacts_dir / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, target)
+        artifacts.append(
+            {
+                "name": name,
+                "mime_type": mimetypes.guess_type(name)[0] or "application/octet-stream",
+                "size_bytes": target.stat().st_size,
+            }
+        )
+    return artifacts
+
+
+def _is_ignored_workspace_path(relative: Path) -> bool:
+    return any(part == "__pycache__" or part.startswith(".") for part in relative.parts)
+
+
+def _capture_matplotlib_figures(
+    artifacts_dir: Path,
+    *,
+    existing_names: set[str] | None = None,
+) -> list[dict[str, Any]]:
     try:
         import matplotlib
 
@@ -118,11 +185,13 @@ def _capture_matplotlib_figures(artifacts_dir: Path) -> list[dict[str, Any]]:
         return []
 
     artifacts: list[dict[str, Any]] = []
+    used_names = set(existing_names or set())
     for index, fig_num in enumerate(plt.get_fignums(), start=1):
         fig = plt.figure(fig_num)
-        name = f"figure_{index}.png"
+        name = _unique_artifact_name(f"figure_{index}.png", used_names)
         path = artifacts_dir / name
         fig.savefig(path, dpi=144, bbox_inches="tight")
+        used_names.add(name)
         artifacts.append(
             {
                 "name": name,
@@ -132,6 +201,19 @@ def _capture_matplotlib_figures(artifacts_dir: Path) -> list[dict[str, Any]]:
         )
     plt.close("all")
     return artifacts
+
+
+def _unique_artifact_name(name: str, used_names: set[str]) -> str:
+    if name not in used_names:
+        return name
+    path = Path(name)
+    stem = path.stem
+    suffix = path.suffix
+    for index in range(2, 10_000):
+        candidate = f"{stem}_{index}{suffix}"
+        if candidate not in used_names:
+            return candidate
+    raise RuntimeError(f"could not allocate artifact name for {name}")
 
 
 def _inline_artifacts(artifacts: list[dict[str, Any]], artifacts_dir: Path) -> list[dict[str, Any]]:
