@@ -118,6 +118,66 @@ def test_subprocess_runner_captures_matplotlib_png() -> None:
     assert base64.b64decode(artifact.content_base64).startswith(b"\x89PNG")
 
 
+def test_subprocess_runner_imports_datascience_runtime_packages() -> None:
+    response = SubprocessRunner().run(
+        run_id="run-1",
+        request=RunRequest(
+            code=(
+                "import matplotlib\n"
+                "import numpy\n"
+                "import openpyxl\n"
+                "import pandas\n"
+                "import scipy\n"
+                "for package in (numpy, pandas, scipy, matplotlib, openpyxl):\n"
+                "    print(package.__name__, package.__version__)\n"
+            )
+        ),
+        limits=_limits(timeout_s=20),
+    )
+
+    assert response.status == RunStatus.SUCCESS
+    imported = {line.split()[0] for line in response.stdout.splitlines()}
+    assert imported == {"numpy", "pandas", "scipy", "matplotlib", "openpyxl"}
+
+
+def test_subprocess_runner_round_trips_excel_with_pandas_and_openpyxl() -> None:
+    response = SubprocessRunner().run(
+        run_id="run-1",
+        request=RunRequest(
+            code=(
+                "import pandas as pd\n"
+                "df = pd.DataFrame({'item': ['alpha', 'beta'], 'value': [2, 3]})\n"
+                "df.to_excel('table.xlsx', index=False, engine='openpyxl')\n"
+                "loaded = pd.read_excel('table.xlsx', engine='openpyxl')\n"
+                "print(int(loaded['value'].sum()))\n"
+                "print(','.join(loaded['item']))\n"
+            )
+        ),
+        limits=_limits(timeout_s=20),
+    )
+
+    assert response.status == RunStatus.SUCCESS
+    assert response.stdout.splitlines() == ["5", "alpha,beta"]
+
+
+def test_subprocess_runner_executes_numpy_and_scipy_operations() -> None:
+    response = SubprocessRunner().run(
+        run_id="run-1",
+        request=RunRequest(
+            code=(
+                "import numpy as np\n"
+                "from scipy import linalg\n"
+                "matrix = np.array([[1.0, 2.0], [3.0, 4.0]])\n"
+                "print(round(float(linalg.det(matrix)), 1))\n"
+            )
+        ),
+        limits=_limits(timeout_s=20),
+    )
+
+    assert response.status == RunStatus.SUCCESS
+    assert response.stdout.strip() == "-2.0"
+
+
 def test_subprocess_runner_scrubs_parent_environment(monkeypatch) -> None:
     monkeypatch.setenv("SHOULD_NOT_LEAK_TO_SANDBOX", "secret")
 

@@ -12,7 +12,9 @@ main C# backend.
 - Stateless execution: one request creates one fresh run.
 - HTTP REST API with OpenAPI docs.
 - Initial runtime preset: `python-datascience`.
-- No runtime package installation.
+- Data science packages are preinstalled in the service environment for the
+  subprocess runner.
+- No per-run package installation.
 - Artifacts are returned inline as base64; the C# backend owns long-term storage.
 - `subprocess` runner is the practical MVP path when the app cannot receive Kubernetes RBAC.
 - Fake runner is available for tests and local API smoke checks.
@@ -125,7 +127,8 @@ or the optional Kubernetes Job runner.
 service must be allowed to create and clean up execution resources in a dedicated
 namespace. This is usually a DevOps/platform decision, not a normal app default.
 
-The Kubernetes runtime image should include:
+The Kubernetes runtime image should stay compatible with the subprocess
+`python-datascience` runtime and include:
 
 - Python
 - `numpy`
